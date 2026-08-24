@@ -45,6 +45,9 @@ def _summarize(data):
     print(f"  {len(data['sections'])} sections · {t['beat_count']} beats")
     print()
     for name, st in data["stems"].items():
+        if not st.get("present", True):
+            print(f"  {name:<7}   — not found")
+            continue
         bar = "▇" * round(st["coverage"] * 24)
         print(f"  {name:<7} {st['coverage'] * 100:>3.0f}% {bar}")
     print()

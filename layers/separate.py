@@ -1,4 +1,8 @@
-"""Split a track into stems (drums / bass / vocals / other) with Demucs.
+"""Split a track into stems with Demucs.
+
+htdemucs_6s separates guitar and piano as their own sources, so a track comes
+back as up to six layers instead of four; which of them actually carry music
+is decided later, in analyze.
 
 Runs demucs as a subprocess so its model download + progress bars stream
 cleanly, and so a crash can't take the whole pipeline down. Tries Apple's MPS
@@ -11,8 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-STEMS = ["drums", "bass", "vocals", "other"]
-MODEL = "htdemucs"
+STEMS = ["drums", "bass", "vocals", "guitar", "piano", "other"]
+MODEL = "htdemucs_6s"
 
 
 def _run(wav_path: Path, tmp: Path, device: str, on_progress=None) -> None:

@@ -14,10 +14,16 @@ from pathlib import Path
 STEM_UI = {
     "drums": ("#C9563F", "the clock", "Kick, snare and hats — the grid everything else locks to."),
     "bass": ("#E08A3C", "the anchor", "The low end: pitch and pulse at the same time."),
-    "other": ("#E4C662", "the color", "Chords, keys, guitars, synths — the harmonic body."),
+    "other": ("#E4C662", "the color", "Whatever melodic remains — synths, strings, organ, brass."),
+    "piano": ("#8FA6D9", "the keys", "Chords and runs from the piano."),
+    "guitar": ("#8FBF7F", "the strings", "Riffs, strums and lead lines."),
     "vocals": ("#5FC0BE", "the voice", "The line you follow, and the words."),
 }
-STEM_ORDER = ["vocals", "other", "bass", "drums"]
+STEM_ORDER = ["vocals", "guitar", "piano", "other", "bass", "drums"]
+
+
+def _display_name(name, st):
+    return st.get("label") or name.title()
 
 CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;600&family=Newsreader:ital,opsz,wght@1,6..72,400&display=swap');
@@ -131,11 +137,11 @@ h2 { font-size: clamp(21px, 3vw, 30px); margin: 0 0 10px; letter-spacing: -0.01e
 
 /* drum grid */
 .grid-wrap { overflow-x: auto; }
-.grid-row { display: grid; grid-template-columns: 62px repeat(16, minmax(26px, 1fr)); gap: 4px; align-items: center; margin-bottom: 5px; }
+.grid-row { display: grid; grid-template-columns: 62px repeat(var(--steps, 16), minmax(20px, 1fr)); gap: 3px; align-items: center; margin-bottom: 5px; }
 .grid-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
 .cell { height: 26px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel); }
 .cell.beat1 { border-color: #3A465C; }
-.step-nums { display: grid; grid-template-columns: 62px repeat(16, minmax(26px, 1fr)); gap: 4px; margin-top: 6px; }
+.step-nums { display: grid; grid-template-columns: 62px repeat(var(--steps, 16), minmax(20px, 1fr)); gap: 3px; margin-top: 6px; }
 .step-nums span { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--dim); text-align: center; }
 .step-nums span.strong { color: var(--ink); }
 .cell.playing { box-shadow: 0 0 0 1px var(--ink) inset; }
@@ -271,12 +277,13 @@ function draw() {
   $('.clock').textContent = fmt(t) + ' / ' + fmt(dur);
   $('.scrub-fill').style.width = (t / dur * 100) + '%';
 
+  const GROUP = ((D.drum_grid && D.drum_grid.grid && D.drum_grid.grid.kick) ? D.drum_grid.grid.kick.length : 16) / 4;
   const bi = beatAt(t);
-  const inBar = bi < 0 ? -1 : ((bi - D.downbeat_phase) % 4 + 4) % 4;
+  const inBar = bi < 0 ? -1 : ((bi - D.downbeat_phase) % GROUP + GROUP) % GROUP;
   $$('.beats i').forEach((el, i) => el.classList.toggle('on', i === inBar));
-  $('.bar-count').textContent = bi < 0 ? 'bar —' : 'bar ' + (Math.floor((bi - D.downbeat_phase) / 4) + 1);
+  $('.bar-count').textContent = bi < 0 ? 'count —' : 'count ' + (inBar + 1) + '/' + GROUP;
 
-  // step within the bar drives the drum-grid highlight
+  // step within the phrase drives the drum-grid highlight
   let step = -1;
   if (bi >= 0 && bi + 1 < D.beats.length && inBar >= 0) {
     const frac = (t - D.beats[bi]) / (D.beats[bi + 1] - D.beats[bi]);
@@ -330,8 +337,8 @@ $$('.sec').forEach((s) => s.addEventListener('click', () => seek(+s.dataset.star
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   if (e.code === 'Space') { e.preventDefault(); $('.play').click(); }
-  const i = '1234'.indexOf(e.key);
-  if (i >= 0 && i < ORDER.length) {
+  const i = parseInt(e.key, 10) - 1;
+  if (!Number.isNaN(i) && i >= 0 && i < ORDER.length) {
     const n = ORDER[i];
     muted.has(n) ? muted.delete(n) : muted.add(n);
     soloed = null;
@@ -425,11 +432,12 @@ def _sections_html(sections):
 
 def _grid_html(drum_grid):
     grid = drum_grid["grid"]
+    steps = len(grid.get("kick", [])) or 16
     rows = []
     colors = {"kick": "#C9563F", "snare": "#E08A3C", "hat": "#E4C662"}
     for part in ("kick", "snare", "hat"):
         cells = []
-        for step, v in enumerate(grid.get(part, [0] * 16)):
+        for step, v in enumerate(grid.get(part, [0] * steps)):
             beat1 = " beat1" if step % 4 == 0 else ""
             bg = (
                 f'background:{colors[part]};opacity:{0.15 + 0.85 * v:.2f}'
@@ -441,7 +449,7 @@ def _grid_html(drum_grid):
         )
     nums = "".join(
         f'<span class="{"strong" if i % 4 == 0 else ""}">{i // 4 + 1 if i % 4 == 0 else "·"}</span>'
-        for i in range(16)
+        for i in range(steps)
     )
     rows.append(f'<div class="step-nums"><span></span>{nums}</div>')
     return "".join(rows)
@@ -456,7 +464,21 @@ def render(data, out_dir: Path) -> Path:
     for name in stems:
         stems[name]["color"] = STEM_UI[name][0]
 
-    order = [n for n in STEM_ORDER if n in stems]
+    order = [n for n in STEM_ORDER if n in stems and stems[n].get("present", True)]
+    absent = [n for n in STEM_ORDER if n in stems and not stems[n].get("present", True)]
+    steps = len(data["drum_grid"]["grid"].get("kick", [])) or 16
+    counts = steps // 4
+
+    grid_section = ""
+    if data["drum_grid"]["bars_used"]:
+        grid_section = f"""<section>
+  <h2>The 8-count</h2>
+  <p class="lede">The drum pattern across {counts} counts (two bars of 4/4), averaged over
+  {data["drum_grid"]["bars_used"]} phrases and split by frequency: kick low, snare mid,
+  hats high. Brightness is how hard that step is hit — four steps to a count. Count along:
+  1 and 5 are the strong beats.</p>
+  <div class="grid-wrap" style="--steps:{steps}">{_grid_html(data["drum_grid"])}</div>
+</section>"""
     audio = "".join(
         f'<audio data-stem="{n}" src="{stems[n]["file"]}" preload="auto"></audio>' for n in order
     )
@@ -498,16 +520,18 @@ def render(data, out_dir: Path) -> Path:
   <button class="play" aria-label="play or pause">▶</button>
   <div class="clock">0:00 / 0:00</div>
   <div class="scrub"><div class="scrub-track"></div><div class="scrub-fill"></div></div>
-  <div class="beats"><i class="one"></i><i></i><i></i><i></i></div>
-  <div class="bar-count">bar —</div>
+  <div class="beats">{"".join('<i class="one"></i>' if i == 0 else "<i></i>" for i in range(counts))}</div>
+  <div class="bar-count">count —</div>
 </div>
 
 <section>
-  <h2>The four layers</h2>
-  <p class="lede">Demucs pulled these apart from the finished mix. Mute one and listen to
-  what its absence does — that gap is the clearest description of its job. Keys
-  <kbd>1</kbd>–<kbd>4</kbd> toggle, <kbd>0</kbd> resets, <kbd>space</kbd> plays.</p>
+  <h2>The {("two","three","four","five","six")[len(order)-2] if 2 <= len(order) <= 6 else len(order)} layers</h2>
+  <p class="lede">Demucs pulled these apart from the finished mix — only layers that
+  actually carry music made the rack. Mute one and listen to what its absence does —
+  that gap is the clearest description of its job. Keys
+  <kbd>1</kbd>–<kbd>{len(order)}</kbd> toggle, <kbd>0</kbd> resets, <kbd>space</kbd> plays.</p>
   <div class="rack">{"".join(_stem_row(n, stems[n]) for n in order)}</div>
+  {f'<p class="lede" style="margin-top:14px">Also looked for: {", ".join(absent)} — nothing meaningful found.</p>' if absent else ""}
 </section>
 
 <section>
@@ -519,13 +543,7 @@ def render(data, out_dir: Path) -> Path:
   <div class="map-time"><span>0:00</span><span>{int(meta["duration"]) // 60}:{int(meta["duration"]) % 60:02d}</span></div>
 </section>
 
-<section>
-  <h2>The bar</h2>
-  <p class="lede">One bar of the drum pattern, averaged over {data["drum_grid"]["bars_used"]} bars
-  and split by frequency: kick low, snare mid, hats high. Brightness is how hard that step
-  is hit. Assumes 4/4 — sixteen steps, four to a beat.</p>
-  <div class="grid-wrap">{_grid_html(data["drum_grid"])}</div>
-</section>
+{grid_section}
 
 <section>
   <h2>What each layer is doing</h2>
@@ -541,7 +559,7 @@ def render(data, out_dir: Path) -> Path:
 </section>
 
 <div class="foot">
-  <p>Stems separated with Demucs (htdemucs), analysis with librosa. Tempo, key, sections and
+  <p>Stems separated with Demucs (htdemucs_6s), analysis with librosa. Tempo, key, sections and
   the drum grid are estimates — separation leaks, and a key guess from chroma is a best fit,
   not a fact. Time signature is assumed 4/4.</p>
   <p>Everything here is derived from your own copy of the audio and stays on this machine.</p>

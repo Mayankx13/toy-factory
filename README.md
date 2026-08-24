@@ -5,10 +5,11 @@ listen to the parts.
 
 ## layers
 
-Point it at a song. It downloads the audio, splits it into four stems with
-[Demucs](https://github.com/adefossez/demucs), measures what each one is doing with
-librosa, and writes a single HTML page where you can mute layers one at a time and
-hear what each is holding up.
+Point it at a song. It downloads the audio, splits it into up to six stems with
+[Demucs](https://github.com/adefossez/demucs) (drums, bass, vocals, guitar, piano,
+and a residual for everything else), keeps only the layers that actually carry
+music, measures what each one is doing with librosa, and writes a single HTML page
+where you can mute layers one at a time and hear what each is holding up.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
@@ -51,13 +52,17 @@ output/<track>/
 
 ### What the report shows
 
-- **Four layers** — a waveform and mute/solo per stem. Keys `1`–`4` toggle,
-  `0` resets, `space` plays, `←`/`→` scrub. The four stems stay sample-aligned;
-  muting swaps the audio out without stopping the clock.
+- **The layers** — a waveform and mute/solo per stem, one row per layer that is
+  actually present (a track with no piano gets no piano row; separation bleed is
+  filtered by energy share, and the residual is labeled by its character —
+  "Pads & textures", "Keys & stabs"). Keys `1`–`N` toggle, `0` resets, `space`
+  plays, `←`/`→` scrub. The stems stay sample-aligned; muting swaps the audio
+  out without stopping the clock.
 - **Arrangement** — section boundaries from stem energy plus harmonic change.
   Repeated letters mean the section came back around. Click to jump.
-- **The bar** — one bar of the drum pattern averaged across the track, split into
-  kick / snare / hat by frequency band.
+- **The 8-count** — the drum pattern across eight counts (two bars of 4/4),
+  averaged over the track and split into kick / snare / hat by frequency band;
+  the transport counts 1–8 with it, for practicing phrase-length counting.
 - **Per-layer detail** — how much of the track it plays, how many hits, where those
   hits sit relative to the beat, and how its energy splits across the spectrum.
 - **Exercises** — listening tasks that use the player to confirm the analysis by ear.
@@ -81,11 +86,11 @@ and is then swapped for a cookie; only one job runs at a time.
 ### Caveats
 
 Separation leaks: a piano can bleed into `vocals`, and on a track with no singing
-the `vocals` stem is whatever else sounded voice-like. Tempo, key and section
+a stem can be dropped or mislabeled. Tempo, key and section
 boundaries are estimates — the key guess in particular is a best-fit chroma
 correlation, and it cannot tell a major key from its relative minor. 4/4 is assumed.
 
-First run downloads an ffmpeg binary (~30 MB) and the Demucs model (~80 MB), then
+First run downloads an ffmpeg binary (~30 MB) and the Demucs model (~2 GB with the 6-source weights), then
 caches both. Separation uses Apple's MPS GPU when available and falls back to CPU.
 
 ### Layout

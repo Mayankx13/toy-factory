@@ -133,18 +133,23 @@ def _key_guess(y):
     return best
 
 
-def _drum_grid(envs, beats, phase):
-    """Average kick/snare/hat onset strength on a 16-step grid across all bars."""
-    downbeat_idx = list(range(phase, len(beats) - 4, 4))
-    grid = {name: np.zeros(16) for name in envs}
+def _drum_grid(envs, beats, phase, beats_per_group=8):
+    """Average kick/snare/hat onset strength on a step grid across the track.
+
+    beats_per_group=8 spans two 4/4 bars, so the grid reads as an 8-count —
+    the way dancers and drummers count phrases — with four steps per count.
+    """
+    steps = beats_per_group * 4
+    downbeat_idx = list(range(phase, len(beats) - beats_per_group, beats_per_group))
+    grid = {name: np.zeros(steps) for name in envs}
     n_bars = 0
     times = _frames_time(len(next(iter(envs.values()))))
     for db in downbeat_idx:
-        bar_beats = beats[db : db + 5]
-        if len(bar_beats) < 5:
+        bar_beats = beats[db : db + beats_per_group + 1]
+        if len(bar_beats) < beats_per_group + 1:
             continue
         n_bars += 1
-        for step in range(16):
+        for step in range(steps):
             beat_i, frac = divmod(step, 4)
             t = bar_beats[beat_i] + (frac / 4) * (bar_beats[beat_i + 1] - bar_beats[beat_i])
             f = np.searchsorted(times, t)
@@ -152,7 +157,7 @@ def _drum_grid(envs, beats, phase):
                 lo, hi = max(0, f - 1), min(len(env), f + 2)
                 grid[name][step] += env[lo:hi].max() if hi > lo else 0
     if n_bars == 0:
-        return {name: [0] * 16 for name in envs}, 0
+        return {name: [0] * steps for name in envs}, 0
     out = {}
     for name, g in grid.items():
         g = g / n_bars
@@ -240,8 +245,15 @@ def _describe(name, st, bpm, sync):
             parts.append("Its phrases float loosely around the grid — singers push and pull against the beat for expression; that rub is deliberate.")
         elif on > 0.5:
             parts.append("It lands squarely on the beat — a rhythmic, percussive delivery.")
+    elif name == "guitar":
+        parts.append(f"Guitar: riffs, strums and lead lines, present {cov} of the track.")
+        d0 = st["density_per_beat"]
+        if d0 is not None and d0 > 1.2:
+            parts.append("It plays busily — closer to a rhythm part than held chords.")
+    elif name == "piano":
+        parts.append(f"Piano: chords and runs from the keys, present {cov} of the track.")
     elif name == "other":
-        parts.append(f"The color: harmony and everything melodic that isn't voice, bass or drums (chords, keys, guitars, synths). Present {cov} of the track.")
+        parts.append(f"{st.get('label', 'The color')}: everything melodic that isn't voice, bass, drums, guitar or piano — synths, strings, organ, brass. Present {cov} of the track.")
     if name != "vocals":
         if on > 0.6:
             parts.append(f"Timing: {round(on * 100)}% of its hits sit right on the beat — it reinforces the pulse.")
@@ -258,6 +270,14 @@ def _describe(name, st, bpm, sync):
     return " ".join(parts)
 
 
+def _other_label(y, density):
+    """Best-guess character of the residual stem, from sustain and brightness."""
+    cent = float(librosa.feature.spectral_centroid(y=y, sr=SR).mean())
+    if density is not None and density > 1.0:
+        return "Keys & stabs"
+    return "Synths & strings" if cent > 2200 else "Pads & textures"
+
+
 def analyze(mix_path, stem_paths, meta):
     print("[analyze] loading audio…", flush=True)
     mix = _load(mix_path)
@@ -266,7 +286,7 @@ def analyze(mix_path, stem_paths, meta):
 
     # ---- beat grid from the drums stem (fall back to the mix) ----
     print("[analyze] tracking beats…", flush=True)
-    drums = stems["drums"]
+    drums = stems.get("drums", mix)
     beat_src = drums if float(np.sqrt((drums**2).mean())) > 1e-3 else mix
     oenv = librosa.onset.onset_strength(y=beat_src, sr=SR, hop_length=HOP)
     tempo, beat_frames = librosa.beat.beat_track(
@@ -298,7 +318,7 @@ def analyze(mix_path, stem_paths, meta):
     drum_onsets = _onset_times(librosa.onset.onset_strength(y=drums, sr=SR, hop_length=HOP))
 
     grid, n_bars = _drum_grid(
-        {"kick": kick_env, "snare": snare_env, "hat": hat_env}, beats, phase
+        {"kick": kick_env, "snare": snare_env, "hat": hat_env}, beats, phase, beats_per_group=8
     )
 
     # swing: where do the hats' off-beat hits actually land inside the beat?
@@ -347,8 +367,30 @@ def analyze(mix_path, stem_paths, meta):
         elif name in ("vocals", "other"):
             sync[f"{name}_drum_lock"] = _lock_pct(onsets, drum_onsets, window=0.05)
 
+    # ---- which stems actually carry music? ----
+    # A stem earns a place by being active for a stretch of the track AND by
+    # holding a real share of the energy — separation bleed fails the second
+    # test even when it technically "plays" the whole time.
+    shares = {n: float(stem_rms[n].mean()) for n in stem_data}
+    total_share = sum(shares.values()) or 1e-9
+    for name, st in stem_data.items():
+        share = shares[name] / total_share
+        st["energy_share"] = round(share, 3)
+        st["present"] = bool(st["coverage"] >= 0.05 and share >= 0.02)
+    if not any(st["present"] for st in stem_data.values()):
+        for st in stem_data.values():
+            st["present"] = True
+
+    if stem_data.get("other", {}).get("present"):
+        stem_data["other"]["label"] = _other_label(
+            stems["other"], stem_data["other"]["density_per_beat"]
+        )
+
     for name in stem_data:
-        stem_data[name]["description"] = _describe(name, stem_data[name], bpm, sync)
+        if stem_data[name]["present"]:
+            stem_data[name]["description"] = _describe(name, stem_data[name], bpm, sync)
+        else:
+            stem_data[name]["description"] = "Nothing meaningful found here — dropped from the rack."
 
     # ---- structure + key ----
     print("[analyze] detecting sections + key…", flush=True)
@@ -356,18 +398,26 @@ def analyze(mix_path, stem_paths, meta):
     key = _key_guess(mix)
 
     lock = sync.get("bass_kick_lock")
+    both = stem_data.get("bass", {}).get("present") and stem_data.get("drums", {}).get("present")
     sync["description"] = (
         f"The bass locks with the kick on {round(lock * 100)}% of its notes."
-        if lock is not None else "No bass-kick relationship measurable in this track."
+        if lock is not None and both else "No bass-kick relationship measurable in this track."
     )
 
+    present = {n for n, st in stem_data.items() if st["present"]}
     exercises = [
-        f"Press play and count '1-2-3-4' out loud with the flashing beat counter at {round(bpm)} BPM. Keep counting until the downbeat ('1') feels inevitable.",
-        "Solo the DRUMS. Watch the rhythm grid: find the kick's steps, then the snare's. Most grooves put the snare on counts 2 and 4 — the backbeat. Clap on 2 and 4 along with it.",
-        "Now mute the drums but keep the BASS. Keep counting 1-2-3-4 — the pulse is still there, implied by the bass. This is how musicians keep time when no drummer is playing.",
-        "Solo VOCALS + DRUMS. Notice where each vocal phrase begins: on the '1', just before it, or just after? Singers rarely start exactly on the downbeat.",
-        "Play everything and follow the arrangement map. Try to predict each section change 2 bars before it happens — arrangers telegraph changes with fills and risers.",
+        f"Press play and count '1-2-3-4-5-6-7-8' out loud with the flashing counter at {round(bpm)} BPM. Counts 1 and 5 are the strong ones — keep going until the '1' feels inevitable.",
     ]
+    if "drums" in present:
+        exercises.append("Solo the DRUMS. Watch the rhythm grid: find the kick's steps, then the snare's. Most grooves put the snare on the even counts — the backbeat. Clap on 2, 4, 6, 8 along with it.")
+    if "bass" in present:
+        exercises.append("Mute the drums but keep the BASS. Keep counting to 8 — the pulse is still there, implied by the bass. This is how musicians keep time when no drummer is playing.")
+    if "vocals" in present:
+        exercises.append("Solo VOCALS" + (" + DRUMS" if "drums" in present else "") + ". Notice where each phrase begins: on the '1', just before it, or just after? Singers rarely start exactly on the downbeat.")
+    if "guitar" in present or "piano" in present:
+        inst = "GUITAR" if "guitar" in present else "PIANO"
+        exercises.append(f"Solo the {inst} and count your 8. Does it change what it plays on count 1 and count 5, or does it ride through the phrase boundary?")
+    exercises.append("Play everything and follow the arrangement map. Try to predict each section change one 8-count before it happens — arrangers telegraph changes with fills and risers.")
 
     return {
         "meta": {
