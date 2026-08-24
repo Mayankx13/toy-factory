@@ -43,7 +43,10 @@ a { color: #8FA6D9; }
 .eyebrow {
   font-family: 'JetBrains Mono', monospace; font-size: 11px;
   letter-spacing: 0.22em; text-transform: uppercase; color: var(--dim); margin-bottom: 14px;
+  display: flex; justify-content: space-between; align-items: baseline; gap: 20px;
 }
+.eyebrow a { text-decoration: none; letter-spacing: 0.1em; }
+.eyebrow a:hover { color: var(--ink); }
 h1 { font-size: clamp(28px, 5vw, 52px); margin: 0 0 6px; letter-spacing: -0.02em; line-height: 1.05; }
 .artist { font-family: 'Newsreader', serif; font-style: italic; color: var(--dim); font-size: 19px; margin: 0 0 4px; }
 .src { font-size: 13px; color: var(--dim); word-break: break-all; }
@@ -175,6 +178,8 @@ kbd {
 """
 
 JS = """
+if (location.protocol === 'file:') document.querySelector('.back')?.remove();
+
 const D = window.__LAYERS__;
 const ORDER = window.__ORDER__;
 const $ = (s, r = document) => r.querySelector(s);
@@ -483,7 +488,7 @@ def render(data, out_dir: Path) -> Path:
 <style>{CSS}</style></head>
 <body>
 {audio}
-<div class="eyebrow">Layers · a track taken apart</div>
+<div class="eyebrow"><span>Layers · a track taken apart</span><a class="back" href="/">← another track</a></div>
 <h1>{meta["title"]}</h1>
 <p class="artist">{meta["artist"] or "unknown artist"}</p>
 {src_line}

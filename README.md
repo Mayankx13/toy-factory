@@ -13,6 +13,16 @@ hear what each is holding up.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
+.venv/bin/python -m layers --serve                     # paste links in a browser
+```
+
+That opens a local page where you drop in a YouTube link and watch it work —
+fetch, separate, measure, render — then lands you on the finished report. Past
+runs are listed there, so you can go back to anything you've taken apart.
+
+The same thing from the terminal:
+
+```bash
 .venv/bin/python -m layers "portishead glory box"      # search YouTube
 .venv/bin/python -m layers https://youtu.be/...        # or a direct URL
 .venv/bin/python -m layers --file ~/Music/demo.wav     # or a local file
@@ -22,6 +32,7 @@ Useful flags:
 
 | flag | what it does |
 | --- | --- |
+| `--serve [PORT]` | the browser front end, on 127.0.0.1 (default port 8721) |
 | `--start S --duration S` | analyse a clip; the player gets the same clip |
 | `--out DIR` | where runs land (default `output/`) |
 | `--report-only RUN_DIR` | re-render `report.html` from a saved `analysis.json` |
@@ -64,12 +75,19 @@ caches both. Separation uses Apple's MPS GPU when available and falls back to CP
 
 ```
 layers/
-├── __main__.py   CLI: download → separate → analyze → report
+├── __main__.py   CLI, on top of pipeline.run()
+├── serve.py      local web front end (stdlib http.server, no framework)
+├── pipeline.py   the four stages in order, with a progress callback
 ├── download.py   yt-dlp + ffmpeg (fetch, import, transcode, trim)
 ├── separate.py   Demucs subprocess, MPS with a CPU fallback
 ├── analyze.py    beats, key, sections, drum grid, per-stem stats
 └── report.py     the HTML page
 ```
+
+The CLI and the server both call `pipeline.run()`, so there is one definition of
+what deconstructing a track means; they differ only in where progress is drawn.
+The server binds to localhost, serves each run's audio with HTTP range requests
+so seeking works, and never reaches outside `output/`.
 
 `playground/layers-of-music.jsx` is the companion piece: a hand-built React
 explainer that synthesizes a six-layer loop in the browser, for hearing the same

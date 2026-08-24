@@ -27,12 +27,14 @@ def slugify(title: str) -> str:
     return slug[:60] or "track"
 
 
-def fetch_youtube(target: str, workdir: Path) -> tuple[Path, dict]:
+def fetch_youtube(target: str, workdir: Path, progress_hook=None) -> tuple[Path, dict]:
     """Download best audio for a URL or search phrase; return (mp3_path, meta)."""
     import yt_dlp
 
     workdir.mkdir(parents=True, exist_ok=True)
     opts = {
+        "quiet": progress_hook is not None,
+        "progress_hooks": [progress_hook] if progress_hook else [],
         "format": "bestaudio/best",
         "outtmpl": str(workdir / "source.%(ext)s"),
         "postprocessors": [
