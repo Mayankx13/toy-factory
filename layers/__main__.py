@@ -9,6 +9,7 @@
 
 import argparse
 import json
+import secrets
 import sys
 import webbrowser
 from pathlib import Path
@@ -60,11 +61,16 @@ def main(argv=None):
     ap.add_argument("--duration", type=float, help="analyse only this many seconds")
     ap.add_argument("--report-only", metavar="RUN_DIR",
                     help="re-render report.html from an existing analysis.json")
+    ap.add_argument("--token", nargs="?", const="", metavar="KEY",
+                    help="require a key (generated if left blank) — use when exposing "
+                         "the server beyond this machine")
     ap.add_argument("--no-open", action="store_true", help="don't open a browser")
     args = ap.parse_args(argv)
 
     if args.serve:
-        return serve.serve(port=args.serve, out_root=args.out, open_browser=not args.no_open)
+        token = args.token or (secrets.token_urlsafe(16) if args.token == "" else None)
+        return serve.serve(port=args.serve, out_root=args.out,
+                           open_browser=not args.no_open, token=token)
 
     if args.report_only:
         run_dir = Path(args.report_only)

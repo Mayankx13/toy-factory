@@ -33,6 +33,7 @@ Useful flags:
 | flag | what it does |
 | --- | --- |
 | `--serve [PORT]` | the browser front end, on 127.0.0.1 (default port 8721) |
+| `--token [KEY]` | require a key; generated if left blank. Use before exposing the server |
 | `--start S --duration S` | analyse a clip; the player gets the same clip |
 | `--out DIR` | where runs land (default `output/`) |
 | `--report-only RUN_DIR` | re-render `report.html` from a saved `analysis.json` |
@@ -60,6 +61,22 @@ output/<track>/
 - **Per-layer detail** — how much of the track it plays, how many hits, where those
   hits sit relative to the beat, and how its energy splits across the spectrum.
 - **Exercises** — listening tasks that use the player to confirm the analysis by ear.
+
+### Sharing it
+
+The work happens on this machine — PyTorch, the Demucs model and ffmpeg come to
+about a gigabyte, and separation wants real CPU — so there is nothing to deploy to
+a serverless host. To let someone else use it, tunnel the local server:
+
+```bash
+.venv/bin/python -m layers --serve --token          # prints a url with a key in it
+cloudflared tunnel --url http://127.0.0.1:8721      # in a second terminal
+```
+
+Append the key to the public hostname cloudflared prints and share that whole URL.
+**Always use `--token` when tunnelling.** Without it, anyone holding the link can
+queue jobs that download video and saturate your CPU. The key rides in `?k=` once
+and is then swapped for a cookie; only one job runs at a time.
 
 ### Caveats
 

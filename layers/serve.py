@@ -5,8 +5,10 @@ the same pipeline the CLI runs, and the page polls for stage progress until the
 report is ready — then sends you straight to it.
 """
 
+import http.cookies
 import json
 import mimetypes
+import secrets
 import threading
 import time
 import traceback
@@ -14,13 +16,18 @@ import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from . import pipeline, report
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 OUT_ROOT = Path("output")
+
+# Set when the server is reachable from outside this machine. A job costs real
+# CPU and writes to disk, so an open link is not something to hand out.
+TOKEN = None
+COOKIE = "layers_key"
 
 STAGE_LABELS = {
     "download": "Fetching audio",
@@ -229,6 +236,11 @@ slow — use the clip fields while you're trying things out.</p>
 """
 
 
+def _busy():
+    with JOBS_LOCK:
+        return any(j["stage"] != "done" and not j["error"] for j in JOBS.values())
+
+
 def _start_job(target, start, duration):
     job_id = uuid.uuid4().hex[:12]
     with JOBS_LOCK:
@@ -267,6 +279,23 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # the pipeline's own progress is the interesting output
 
+    def _authorized(self):
+        """No token means localhost-only use; with one, a cookie or ?k= is required."""
+        if TOKEN is None:
+            return True
+        jar = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
+        if COOKIE in jar and secrets.compare_digest(jar[COOKIE].value, TOKEN):
+            return True
+        supplied = parse_qs(urlparse(self.path).query).get("k", [""])[0]
+        return bool(supplied) and secrets.compare_digest(supplied, TOKEN)
+
+    def _deny(self):
+        self._send(
+            "<!doctype html><meta charset=utf-8><title>Layers</title>"
+            "<body style='background:#0F1218;color:#9AA3B2;font:15px system-ui;"
+            "display:grid;place-items:center;height:100vh;margin:0'>"
+            "<p>This link needs its key.</p>", code=403)
+
     def _send(self, body, ctype="text/html; charset=utf-8", code=200, extra=None):
         if isinstance(body, str):
             body = body.encode()
@@ -282,10 +311,16 @@ class Handler(BaseHTTPRequestHandler):
         self._send(json.dumps(obj), "application/json", code)
 
     def do_GET(self):
+        if not self._authorized():
+            return self._deny()
         path = unquote(urlparse(self.path).path)
 
         if path == "/":
-            return self._send(_index_html(), extra={"Cache-Control": "no-store"})
+            # trade the ?k= for a cookie so the key stays out of later requests
+            extra = {"Cache-Control": "no-store"}
+            if TOKEN and COOKIE not in self.headers.get("Cookie", ""):
+                extra["Set-Cookie"] = f"{COOKIE}={TOKEN}; Path=/; SameSite=Lax; Max-Age=604800"
+            return self._send(_index_html(), extra=extra)
 
         if path.startswith("/api/job/"):
             with JOBS_LOCK:
@@ -298,6 +333,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send("<h1>404</h1>", code=404)
 
     def do_POST(self):
+        if not self._authorized():
+            return self._deny()
         if urlparse(self.path).path != "/api/run":
             return self._send("<h1>404</h1>", code=404)
         length = int(self.headers.get("Content-Length", 0))
@@ -305,6 +342,8 @@ class Handler(BaseHTTPRequestHandler):
         target = (body.get("target") or "").strip()
         if not target:
             return self._json({"error": "nothing to work on"}, 400)
+        if _busy():
+            return self._json({"error": "already working on a track — one at a time"}, 429)
         return self._json({"job": _start_job(target, body.get("start"), body.get("duration"))})
 
     def _serve_file(self, rel):
@@ -344,13 +383,16 @@ class Handler(BaseHTTPRequestHandler):
                    extra={"Accept-Ranges": "bytes", "Cache-Control": "no-store"})
 
 
-def serve(port=8721, out_root="output", open_browser=True):
-    global OUT_ROOT
+def serve(port=8721, out_root="output", open_browser=True, token=None):
+    global OUT_ROOT, TOKEN
     OUT_ROOT = Path(out_root)
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
+    TOKEN = token
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    url = f"http://127.0.0.1:{port}/"
+    url = f"http://127.0.0.1:{port}/" + (f"?k={token}" if token else "")
     print(f"  layers → {url}   (ctrl-c to stop)")
+    if token:
+        print("  a key is required — share the whole url, key included")
     if open_browser:
         webbrowser.open(url)
     try:
