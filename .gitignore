@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+
+# generated runs: audio + stems + report, all reproducible from the CLI
+output/
+
+# Claude Code scratch worktrees
+.claude/

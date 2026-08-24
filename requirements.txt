@@ -1,0 +1,9 @@
+# Pinned to what this project was built and verified against.
+# ffmpeg arrives via static-ffmpeg (self-contained binary, no Homebrew needed).
+yt-dlp==2026.8.19
+static-ffmpeg==3.0
+demucs==4.1.0
+librosa==0.11.0
+numpy==2.4.6
+soundfile==0.14.0
+torch==2.13.0
